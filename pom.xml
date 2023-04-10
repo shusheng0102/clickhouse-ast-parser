@@ -12,11 +12,16 @@
         <antlr.version>4.9.1</antlr.version>
         <guava.version>23.0</guava.version>
         <lombok.version>1.18.20</lombok.version>
-        <slf4j.version>1.7.32</slf4j.version>
+        <slf4j.version>1.7.36</slf4j.version>
         <junit.version>5.8.0-RC1</junit.version>
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>com.clickhouse</groupId>
+            <artifactId>clickhouse-jdbc</artifactId>
+            <version>0.4.0</version>
+        </dependency>
         <dependency>
             <groupId>org.antlr</groupId>
             <artifactId>antlr4</artifactId>
