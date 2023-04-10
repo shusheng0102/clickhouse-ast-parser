@@ -3,17 +3,17 @@ package com.clickhouse.parser;
 import com.clickhouse.client.ClickHouseConfig;
 import com.clickhouse.jdbc.parser.ClickHouseSqlParser;
 import com.clickhouse.jdbc.parser.ClickHouseSqlStatement;
-import com.clickhouse.parser.ast.DistributedTableInfoDetector;
+import com.clickhouse.parser.ast.FromClause;
 import com.clickhouse.parser.ast.INode;
 import com.clickhouse.parser.ast.SelectStatement;
 import com.clickhouse.parser.ast.SelectUnionQuery;
+import com.clickhouse.parser.ast.expr.ColumnExpr;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.Spliterator;
 
 import static com.clickhouse.jdbc.parser.ClickHouseSqlStatement.KEYWORD_FORMAT;
 
@@ -21,7 +21,7 @@ import static com.clickhouse.jdbc.parser.ClickHouseSqlStatement.KEYWORD_FORMAT;
 public class TestAstParser {
     @Test
     public void testAst() {
-        String sql = "SELECT t1.a,count(DISTINCT t1.b ) as tb FROM t1 RIGHT JOIN t2 ON t1.id = t2.id where t1.b > 10 LIMIT 1000";
+        String sql = "SELECT DISTINCT t1.a,count(DISTINCT t1.b ) as tb FROM t1 RIGHT JOIN t2 ON t1.id = t2.id where t1.b > 10 LIMIT 1000";
 
         ClickHouseSqlStatement[] parse = ClickHouseSqlParser.parse(sql, new ClickHouseConfig());
 
@@ -60,60 +60,36 @@ public class TestAstParser {
 
     @Test
     public void testReferredTablesDetector() {
-        String sql = "SELECT t1.a FROM t1 RIGHT JOIN t2 ON t1.id = t2.id LIMIT 1000";
+        String sql = "SELECT DISTINCT t1.a,count(DISTINCT t1.b ),ab in (select b from tab1 where c=0) as tb FROM t1 RIGHT JOIN t2 ON t1.id = t2.id where t1.b > 10 LIMIT 1000";
+        String sql1 = "\tSELECT DISTINCT --SELECT 子句 \n" +
+                "\tcol1, col2, SUM(col3) AS total,toStartOfDay(toDateTime('2022-01-0112:00:00')), --列列表达式 \n" +
+                "\tCASE WHEN col1 = 'foo' THEN col2 ELSE 'non-foo' END --CASE 表达式\n" +
+                "\tFROM my_table t2\n" +
+                "\tRIGHT JOIN t2 ON t1.id = t2.id\n" +
+                "\tWHERE (col1 = 'foo' OR col2 = 'bar') AND col3 >10 --WHERE 子句\n" +
+                "\tGROUP BY col1, col2 --GROUP BY 子句\n" +
+                "\tHAVING SUM(col3) >100 --HAVING 子句\n" +
+                "\tORDER BY total DESC, col1 ASC --ORDER BY 子句\n" +
+                "\tLIMIT10 OFFSET0 --LIMIT 子句\n" +
+                "\tFORMAT JSON --FORMAT 子句\n" +
+                "\tSETTINGS max_memory_usage =100000000 --SETTINGS 子句\n" +
+                "\tFINAL WITH TOTALS --WITH TOTALS修饰符;";
         AstParser astParser = new AstParser();
-        Object ast = astParser.parse(sql);
-        ReferredTablesDetector referredTablesDetector = new ReferredTablesDetector();
-        List<String> tables = referredTablesDetector.searchTables((INode) ast);
-        tables.parallelStream().forEach(table -> System.out.println(table));
+        Object ast = astParser.parse(sql1);
+        SelectUnionQuery  selectUnionQuery= (SelectUnionQuery)ast;
+        List<SelectStatement> statements = selectUnionQuery.getStatements();
+        System.out.println(statements.size());
+        SelectStatement selectStatement = statements.get(0);
+        System.out.println(selectStatement.isDistinct());
+        FromClause fromClause = selectStatement.getFromClause();
+        List<ColumnExpr> exprs = selectStatement.getExprs();
+
+        System.out.println("over");
+
+
     }
 
-    @Test
-    public void testDistributedTableInfoDetector() {
-        String sql = "CREATE TABLE my_db.my_tbl (date Date, name String) Engine = Distributed('my_cluster', 'my_db', 'my_tbl_local', rand())";
-        DistributedTableInfoDetector distributedTableInfoDetector = new DistributedTableInfoDetector();
-        String clusterName = distributedTableInfoDetector.searchCluster(sql);
-        log.info(clusterName);
-        System.out.println(clusterName);
-        long start = System.currentTimeMillis();
-        String tableFullName = distributedTableInfoDetector.searchLocalTableFullName(sql);
-        long end = System.currentTimeMillis();
-        log.info(tableFullName);
-        System.out.println(tableFullName);
-        log.info("It takes " + (end - start) + " ms");
-        System.out.println("It takes " + (end - start) + " ms");
-    }
 
-    @Test
-    public void testDistributedTableInfoDetector2() {
-        String sql = "CREATE TABLE mydb.mytb (uuid UUID DEFAULT generateUUIDv4(), cktime DateTime DEFAULT now() COMMENT 'c', openid String, username String, appid String, from_channel String, source_channel String, source String, regtime DateTime, brandid String, devicecode String, actiontime DateTime, ismingamelogin String, version String, platform String, project String, plat String, source_openid String COMMENT 'a', event Int16 COMMENT 'b') ENGINE = ReplicatedMergeTree('/clickhouse/mydb/mytb/{shard}', '{replica}') PARTITION BY toYYYYMM(cktime) ORDER BY (regtime, appid, openid) SETTINGS index_granularity = 8192";
-        log.info("=========distributedTableInfoDetector");
-        System.out.println("=========distributedTableInfoDetector");
-        DistributedTableInfoDetector distributedTableInfoDetector = new DistributedTableInfoDetector();
-        String clusterName = distributedTableInfoDetector.searchCluster(sql);
-        log.info(clusterName);
-        System.out.println(clusterName);
-        long start = System.currentTimeMillis();
-        String tableFullName = distributedTableInfoDetector.searchLocalTableFullName(sql);
-        long end = System.currentTimeMillis();
-        log.info(tableFullName);
-        System.out.println(tableFullName);
-        log.info("It takes " + (end - start) + " ms");
-        System.out.println("It takes " + (end - start) + " ms");
-    }
-
-    @Test
-    public void testDistributedTableInfoDetector3() {
-        String sql = "CREATE TABLE my_db.my_tbl on cluster my_cluster Engine = Distributed('my_cluster', 'my_db', 'my_tbl_local', rand()) as my_db.my_tbl_local";
-        DistributedTableInfoDetector distributedTableInfoDetector = new DistributedTableInfoDetector();
-        String clusterName = distributedTableInfoDetector.searchCluster(sql);
-        log.info(clusterName);
-        long start = System.currentTimeMillis();
-        String tableFullName = distributedTableInfoDetector.searchLocalTableFullName(sql);
-        long end = System.currentTimeMillis();
-        log.info(tableFullName);
-        log.info("It takes " + (end - start) + " ms");
-    }
 
 
 }
